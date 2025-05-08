@@ -127,9 +127,9 @@ def setup_page():
         # Field
         st.subheader("Field")
         area = st.number_input(
-            "Field area (ha)", min_value=0.1, step=0.1,
+            "Field area (ha)",
+            min_value=0.1, step=0.1,
             key='widget_area',
-            value=st.session_state['area'],
             on_change=callback_factory('area')
         )
         st.session_state['area'] = area
@@ -177,6 +177,7 @@ def setup_page():
 
         # Fertilization Schedule
         st.subheader("Fertilization Schedule")
+        st.caption("The amount is in Kg/ha")
         fert_df = st.data_editor(st.session_state['fert_schedule'], num_rows="dynamic", key='fert_schedule_editor')
         st.session_state['fert_schedule'] = fert_df
         
