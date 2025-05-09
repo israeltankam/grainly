@@ -5,6 +5,8 @@ import pandas as pd
 from datetime import date, timedelta
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
+import warnings
+warnings.filterwarnings('ignore')
 
 # Define soil properties for texture classes
 _SOIL_TABLE = {
@@ -35,13 +37,11 @@ def callback_factory(key):
 
 # Initialize session state defaults
 def init_session_state():
-    # Set basic defaults
     st.session_state.setdefault('area', 1.0)
     st.session_state.setdefault('density', 7.0)
     st.session_state.setdefault('sowing_date', date.today())
     st.session_state.setdefault('sowing_depth', 5)
-    st.session_state.setdefault('initial_nitrate', 0.0)
-    # Build monthly schedules
+    st.session_state.setdefault('initial_nitrate', 70.0)
     if 'fert_schedule' not in st.session_state:
         sow = st.session_state['sowing_date']
         dates = [sow + timedelta(days=30*i) for i in range(4)]
@@ -50,7 +50,6 @@ def init_session_state():
         sow = st.session_state['sowing_date']
         dates = [sow + timedelta(days=30*i) for i in range(4)]
         st.session_state['irr_schedule'] = pd.DataFrame({'date': dates, 'amount': [20]*4})
-    # Other defaults
     defaults = {
         'location': '', 'raw_location': '', 'location_suggestions': [],
         'variety': 'Resolute', 'use_expert_soil': False, 'soil_type': 'loam',
@@ -62,14 +61,14 @@ def init_session_state():
     }
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
-    for k in ['raw_location', 'variety', 'area', 'density', 'sowing_date', 'sowing_depth', 'initial_nitrate', 'use_expert_soil', 'soil_type']:
+    for k in ['raw_location','variety','area','density','sowing_date','sowing_depth','initial_nitrate','use_expert_soil','soil_type']:
         widget = f"widget_{k}"
         st.session_state.setdefault(widget, st.session_state[k])
 
 # Main setup page
 def setup_page():
     init_session_state()
-    col1, _ = st.columns([3, 4])
+    col1, _ = st.columns([3,4])
     with col1:
         geolocator = Nominatim(user_agent="stics_app")
         st.subheader("Setup")
@@ -80,7 +79,7 @@ def setup_page():
             key='widget_raw_location',
             value=st.session_state['raw_location'],
             on_change=callback_factory('raw_location'),
-            help="Type your field location for geocoding, then select one among the suggested locations"
+            help="Type your field location for geocoding, then select one among suggestions"
         )
         if st.session_state['raw_location']:
             try:
@@ -90,7 +89,6 @@ def setup_page():
                 st.session_state['location_suggestions'] = [r.address for r in results]
             except:
                 st.session_state['location_suggestions'] = []
-                # Select location
         loc_opts = st.session_state['location_suggestions']
         idx = loc_opts.index(st.session_state['location']) if st.session_state['location'] in loc_opts else 0
         selection = st.selectbox(
@@ -100,14 +98,11 @@ def setup_page():
             key='widget_location',
             on_change=callback_factory('location')
         )
-        # Store selection and fetch coordinates
-        st.session_state['location'] = selection
+        
         try:
             loc = geolocator.geocode(selection, timeout=5)
             if loc:
                 st.session_state['location_coords'] = (loc.latitude, loc.longitude)
-            else:
-                st.warning("Failed to geocode the selected location.")
         except Exception as e:
             st.warning(f"Geocoding error: {e}")
 
@@ -115,87 +110,105 @@ def setup_page():
         st.subheader("Crop")
         varieties = load_varieties()
         idx_var = varieties.index(st.session_state['variety']) if st.session_state['variety'] in varieties else 0
-        variety = st.selectbox(
+        st.selectbox(
             "Maize variety",
             options=varieties,
             index=idx_var,
             key='widget_variety',
             on_change=callback_factory('variety')
         )
-        st.session_state['variety'] = variety
+        
 
         # Field
         st.subheader("Field")
-        area = st.number_input(
-            "Field area (ha)",
-            min_value=0.1, step=0.1,
+        st.number_input(
+            "Field area (ha)", min_value=0.1, step=0.1,
             key='widget_area',
+            value=st.session_state['area'],
             on_change=callback_factory('area')
         )
-        st.session_state['area'] = area
+        
 
         # Planting
         st.subheader("Planting")
-        density = st.number_input(
+        st.number_input(
             "Planting density (plants/m²)", min_value=1.0, step=0.5,
-            key='widget_density', value=st.session_state['density'],
+            key='widget_density',
+            value=st.session_state['density'],
             on_change=callback_factory('density')
         )
-        st.session_state['density'] = density
-        sdate = st.date_input(
+        
+        st.date_input(
             "Sowing date",
-            key='widget_sowing_date', value=st.session_state['sowing_date'],
+            key='widget_sowing_date',
+            value=st.session_state['sowing_date'],
             on_change=callback_factory('sowing_date')
         )
-        st.session_state['sowing_date'] = sdate
-        depth = st.number_input(
+        
+        st.number_input(
             "Sowing depth (cm)", min_value=1, step=1,
-            key='widget_sowing_depth', value=st.session_state['sowing_depth'],
+            key='widget_sowing_depth',
+            value=st.session_state['sowing_depth'],
             on_change=callback_factory('sowing_depth')
         )
-        st.session_state['sowing_depth'] = depth
 
-                # Soil Configuration
+        # Soil Configuration
         st.subheader("Soil Configuration")
-        # Determine soil options and default
-        soils = [k.capitalize() for k in _SOIL_TABLE.keys()]
-        # Compute selected index and normalize session_state key
-        default_soil = st.session_state.get('soil_type', 'loam').capitalize()
-        sel_idx = soils.index(default_soil) if default_soil in soils else 0
-        # Ensure widget value matches an option
-        st.session_state['widget_soil_type'] = soils[sel_idx]
-        # Render selectbox
-        soil_choice = st.selectbox(
-            "Soil type",
-            options=soils,
-            index=sel_idx,
-            key='widget_soil_type',
-            on_change=callback_factory('soil_type')
+        expert = st.checkbox(
+            "Enable expert soil layers",
+            key='widget_use_expert_soil',
+            value=st.session_state['use_expert_soil'],
+            on_change=callback_factory('use_expert_soil')
         )
-        # Store back lowercased soil_type
-        st.session_state['soil_type'] = soil_choice.lower()
+        
+        if expert:
+            soil_df = st.session_state['soil_layers']
+            edited = st.data_editor(
+                soil_df, num_rows="dynamic", key='soil_layers_editor'
+            )
+            st.session_state['soil_layers'] = edited
+        else:
+            display_soils = list(_SOIL_TABLE.keys())
+
+            # Selectbox (defaults to first)
+            soil_choice_display = st.selectbox(
+                "Soil type",
+                options=display_soils,
+                index=0,
+                key='widget_soil_type',
+                on_change=callback_factory('soil_type')
+            )
+
 
         # Fertilization Schedule
         st.subheader("Fertilization Schedule")
-        st.caption("The amount is in Kg/ha")
-        fert_df = st.data_editor(st.session_state['fert_schedule'], num_rows="dynamic", key='fert_schedule_editor')
+        st.caption("Amounts in Kg/ha per event; add or remove rows as needed.")
+        fert_df = st.data_editor(
+            st.session_state['fert_schedule'],
+            num_rows="dynamic",
+            key='fert_schedule_editor'
+        )
         st.session_state['fert_schedule'] = fert_df
-        
+
         # Irrigation Schedule
         st.subheader("Irrigation Schedule")
-        irr_df = st.data_editor(st.session_state['irr_schedule'], num_rows="dynamic", key='irr_schedule_editor')
+        st.caption("Amounts in mm per event; add or remove rows as needed.")
+        irr_df = st.data_editor(
+            st.session_state['irr_schedule'],
+            num_rows="dynamic",
+            key='irr_schedule_editor'
+        )
         st.session_state['irr_schedule'] = irr_df
 
         # Initial Soil Nitrogen
         st.subheader("Initial Soil Nitrogen")
-        nitrate = st.number_input(
+        st.number_input(
             "Initial soil nitrate (kg N/ha)", min_value=0.0, step=5.0,
-            key='widget_initial_nitrate', value=st.session_state['initial_nitrate'],
+            key='widget_initial_nitrate',
+            value=st.session_state['initial_nitrate'],
             on_change=callback_factory('initial_nitrate')
         )
-        st.session_state['initial_nitrate'] = nitrate
-
-
+        
 
 
     # For debugging session state (uncomment during development)
