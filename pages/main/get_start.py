@@ -158,8 +158,10 @@ def setup_page():
             "Enable expert soil layers",
             key='widget_use_expert_soil',
             value=st.session_state['use_expert_soil'],
-            on_change=callback_factory('use_expert_soil')
+            on_change=callback_factory('use_expert_soil'),
+            help="Toggle to Expert mode: define custom soil profile layers by adding/removing horizons and specifying for each its texture (e.g., loam), field capacity (FC) and wilting point (WP). Use only if you have measured profile data; otherwise leave unchecked to apply a single default soil class."
         )
+
         
         if expert:
             soil_df = st.session_state['soil_layers']
