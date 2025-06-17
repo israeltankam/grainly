@@ -1,10 +1,11 @@
 # get_start.py
-
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
+from functools import lru_cache
+import time
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -24,6 +25,27 @@ _SOIL_TABLE = {
     'clay':                {'field_capacity': 0.47, 'wilting_point': 0.27}
 }
 
+# Cached geocoding functions
+@lru_cache(maxsize=100)
+def cached_geocode(query, limit=5):
+    """Cached geocoding function with proper user agent"""
+    geolocator = Nominatim(user_agent="stics_app (contact@example.com)")
+    try:
+        return geolocator.geocode(query, exactly_one=False, limit=limit)
+    except (GeocoderTimedOut, GeocoderServiceError):
+        return []
+    except Exception:
+        return []
+
+@lru_cache(maxsize=100)
+def cached_geocode_single(query):
+    """Cached geocoding for single location"""
+    geolocator = Nominatim(user_agent="stics_app (contact@example.com)")
+    try:
+        return geolocator.geocode(query, exactly_one=True, timeout=10)
+    except Exception:
+        return None
+
 # Helper: load variety list from CSV
 def load_varieties(csv_path="src/data/maize_varieties.csv"):
     df = pd.read_csv(csv_path, encoding='ISO-8859-1')
@@ -42,17 +64,30 @@ def init_session_state():
     st.session_state.setdefault('sowing_date', date.today())
     st.session_state.setdefault('sowing_depth', 5)
     st.session_state.setdefault('initial_nitrate', 70.0)
+    
+    # Initialize schedules
+    sow = st.session_state['sowing_date']
+    dates = [sow + timedelta(days=30*i) for i in range(4)]
     if 'fert_schedule' not in st.session_state:
-        sow = st.session_state['sowing_date']
-        dates = [sow + timedelta(days=30*i) for i in range(4)]
         st.session_state['fert_schedule'] = pd.DataFrame({'date': dates, 'amount': [50]*4})
     if 'irr_schedule' not in st.session_state:
-        sow = st.session_state['sowing_date']
-        dates = [sow + timedelta(days=30*i) for i in range(4)]
         st.session_state['irr_schedule'] = pd.DataFrame({'date': dates, 'amount': [20]*4})
+    
+    # Location defaults
+    location_defaults = {
+        'location': '', 
+        'raw_location': '', 
+        'location_suggestions': [],
+        'last_geocode_time': 0
+    }
+    for k, v in location_defaults.items():
+        st.session_state.setdefault(k, v)
+    
+    # Soil and variety defaults
     defaults = {
-        'location': '', 'raw_location': '', 'location_suggestions': [],
-        'variety': 'Resolute', 'use_expert_soil': False, 'soil_type': 'loam',
+        'variety': 'Resolute', 
+        'use_expert_soil': False, 
+        'soil_type': 'loam',
         'soil_layers': pd.DataFrame([
             {'depth_top': 0.0, 'depth_bottom': 0.3, 'texture': 'loam',
              'field_capacity': _SOIL_TABLE['loam']['field_capacity'],
@@ -61,6 +96,8 @@ def init_session_state():
     }
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
+    
+    # Sync widget states
     for k in ['raw_location','variety','area','density','sowing_date','sowing_depth','initial_nitrate','use_expert_soil','soil_type']:
         widget = f"widget_{k}"
         st.session_state.setdefault(widget, st.session_state[k])
@@ -70,41 +107,64 @@ def setup_page():
     init_session_state()
     col1, _ = st.columns([3,4])
     with col1:
-        geolocator = Nominatim(user_agent="israeltankam@gmail.com")
         st.subheader("Setup")
 
-        # Location
+        # Location section with search button
         st.text_input(
             "Field location (City, Country)",
             key='widget_raw_location',
             value=st.session_state['raw_location'],
             on_change=callback_factory('raw_location'),
-            help="Type your field location for geocoding, then select one among suggestions"
-        )
-        if st.session_state['raw_location']:
-            try:
-                results = geolocator.geocode(
-                    st.session_state['raw_location'], exactly_one=False, limit=5
-                )
-                st.session_state['location_suggestions'] = [r.address for r in results]
-            except:
-                st.session_state['location_suggestions'] = []
-        loc_opts = st.session_state['location_suggestions']
-        idx = loc_opts.index(st.session_state['location']) if st.session_state['location'] in loc_opts else 0
-        selection = st.selectbox(
-            "Select location",
-            options=loc_opts,
-            index=idx,
-            key='widget_location',
-            on_change=callback_factory('location')
+            help="Type your field location and click 'Search Locations'"
         )
         
-        try:
-            loc = geolocator.geocode(selection, timeout=5)
-            if loc:
-                st.session_state['location_coords'] = (loc.latitude, loc.longitude)
-        except Exception as e:
-            st.warning(f"Geocoding error: {e}")
+        # Search button triggers geocoding
+        if st.button("Search Locations", key="search_btn"):
+            query = st.session_state['raw_location']
+            if query:
+                # Rate limiting
+                now = time.time()
+                elapsed = now - st.session_state.last_geocode_time
+                if elapsed < 1.2:  # 1.2 seconds between requests
+                    time.sleep(1.2 - elapsed)
+                
+                with st.spinner("Searching locations..."):
+                    try:
+                        results = cached_geocode(query, limit=5)
+                        if results:
+                            st.session_state['location_suggestions'] = [r.address for r in results]
+                        else:
+                            st.session_state['location_suggestions'] = []
+                            st.warning("No locations found. Try a different query.")
+                    except Exception as e:
+                        st.error(f"Geocoding error: {str(e)}")
+                        st.session_state['location_suggestions'] = []
+                
+                st.session_state.last_geocode_time = time.time()
+        
+        # Location suggestions dropdown
+        loc_opts = st.session_state['location_suggestions']
+        if loc_opts:
+            idx = loc_opts.index(st.session_state['location']) if st.session_state['location'] in loc_opts else 0
+            selection = st.selectbox(
+                "Select location",
+                options=loc_opts,
+                index=idx,
+                key='widget_location',
+                on_change=callback_factory('location')
+            )
+            
+            # Get coordinates for selected location
+            if selection and selection != st.session_state.get('last_selection'):
+                try:
+                    loc = cached_geocode_single(selection)
+                    if loc:
+                        st.session_state['location_coords'] = (loc.latitude, loc.longitude)
+                        st.session_state['last_selection'] = selection
+                    else:
+                        st.warning("Could not get coordinates for this location")
+                except Exception as e:
+                    st.warning(f"Coordinate lookup failed: {str(e)}")
 
         # Crop
         st.subheader("Crop")
@@ -118,7 +178,6 @@ def setup_page():
             on_change=callback_factory('variety')
         )
         
-
         # Field
         st.subheader("Field")
         st.number_input(
@@ -128,7 +187,6 @@ def setup_page():
             on_change=callback_factory('area')
         )
         
-
         # Planting
         st.subheader("Planting")
         st.number_input(
@@ -159,9 +217,8 @@ def setup_page():
             key='widget_use_expert_soil',
             value=st.session_state['use_expert_soil'],
             on_change=callback_factory('use_expert_soil'),
-            help="Toggle to Expert mode: define custom soil profile layers by adding/removing horizons and specifying for each its texture (e.g., loam), field capacity (FC) and wilting point (WP). Use only if you have measured profile data; otherwise leave unchecked to apply a single default soil class."
+            help="Toggle to Expert mode: define custom soil profile layers"
         )
-
         
         if expert:
             soil_df = st.session_state['soil_layers']
@@ -171,8 +228,6 @@ def setup_page():
             st.session_state['soil_layers'] = edited
         else:
             display_soils = list(_SOIL_TABLE.keys())
-
-            # Selectbox (defaults to first)
             soil_choice_display = st.selectbox(
                 "Soil type",
                 options=display_soils,
@@ -180,7 +235,6 @@ def setup_page():
                 key='widget_soil_type',
                 on_change=callback_factory('soil_type')
             )
-
 
         # Fertilization Schedule
         st.subheader("Fertilization Schedule")
