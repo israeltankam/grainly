@@ -25,7 +25,7 @@ _SOIL_TABLE = {
 }
 
 # Initialize a single geolocator with a user agent (with contact) and timeout
-geolocator = Nominatim(user_agent="stics_app (your_email@example.com)", timeout=10)
+geolocator = Nominatim(user_agent="stics_app (israeltankam@gmail.com)", timeout=10)
 
 # Memoize to avoid redundant requests and throttle
 @st.cache_data
