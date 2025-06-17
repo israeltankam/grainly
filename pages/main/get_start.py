@@ -24,16 +24,16 @@ _SOIL_TABLE = {
     'clay':                {'field_capacity': 0.47, 'wilting_point': 0.27}
 }
 
-# Initialize a single geolocator with a user agent (with contact) and timeout
-geolocator = Nominatim(user_agent="stics_app (israeltankam@gmail.com)", timeout=10)
+# Instantiate geolocator once with proper user agent
+geolocator = Nominatim(user_agent="stics_app (your_email@example.com)", timeout=10)
 
-# Memoize to avoid redundant requests and throttle
-@st.cache_data
+# Memoized function returning address strings for suggestions
 def fetch_location_suggestions(query: str):
     if not query:
         return []
     try:
-        return geolocator.geocode(query, exactly_one=False, limit=5)
+        results = geolocator.geocode(query, exactly_one=False, limit=5)
+        return [r.address for r in results] if results else []
     except (GeocoderTimedOut, GeocoderServiceError):
         return []
 
@@ -42,7 +42,7 @@ def load_varieties(csv_path="src/data/maize_varieties.csv"):
     df = pd.read_csv(csv_path, encoding='ISO-8859-1')
     return df['Variety'].tolist()
 
-# Callbacks to sync widget values into session state
+# Callback factory
 def callback_factory(key):
     def _callback():
         st.session_state[key] = st.session_state[f"widget_{key}"]
@@ -85,7 +85,7 @@ def setup_page():
     with col1:
         st.subheader("Setup")
 
-        # Location Input
+        # Location input
         st.text_input(
             "Field location (City, Country)",
             key='widget_raw_location',
@@ -93,31 +93,28 @@ def setup_page():
             on_change=callback_factory('raw_location'),
             help="Type your field location for geocoding, then select one among suggestions"
         )
+        raw_loc = st.session_state['raw_location'].strip()
 
-        # Fetch suggestions only if non-empty
-        raw_loc = st.session_state['raw_location']
-        results = fetch_location_suggestions(raw_loc)
-        suggestions = [r.address for r in results] if results else []
+        # Suggestions
+        suggestions = fetch_location_suggestions(raw_loc)
         st.session_state['location_suggestions'] = suggestions
-
-        # Select among suggestions
-        idx = suggestions.index(st.session_state['location']) if st.session_state['location'] in suggestions else 0
-        selection = st.selectbox(
-            "Select location",
-            options=suggestions or [""],
-            index=idx,
-            key='widget_location',
-            on_change=callback_factory('location')
-        )
-
-        # Resolve coordinates for selected location
-        if selection:
+        if suggestions:
+            current = st.session_state['location'] if st.session_state['location'] in suggestions else suggestions[0]
+            selection = st.selectbox(
+                "Select location",
+                options=suggestions,
+                index=suggestions.index(current),
+                key='widget_location',
+                on_change=callback_factory('location')
+            )
             try:
                 loc = geolocator.geocode(selection)
                 if loc:
                     st.session_state['location_coords'] = (loc.latitude, loc.longitude)
             except (GeocoderTimedOut, GeocoderServiceError) as e:
                 st.warning(f"Geocoding error: {e}")
+        else:
+            st.info("Enter a location above to see suggestions.")
 
         # Crop
         st.subheader("Crop")
@@ -178,7 +175,7 @@ def setup_page():
             st.session_state['soil_layers'] = edited
         else:
             display_soils = list(_SOIL_TABLE.keys())
-            soil_choice_display = st.selectbox(
+            st.selectbox(
                 "Soil type",
                 options=display_soils,
                 index=display_soils.index(st.session_state['soil_type']),
@@ -190,9 +187,7 @@ def setup_page():
         st.subheader("Fertilization Schedule")
         st.caption("Amounts in Kg/ha per event; add or remove rows as needed.")
         fert_df = st.data_editor(
-            st.session_state['fert_schedule'],
-            num_rows="dynamic",
-            key='fert_schedule_editor'
+            st.session_state['fert_schedule'], num_rows="dynamic", key='fert_schedule_editor'
         )
         st.session_state['fert_schedule'] = fert_df
 
@@ -200,9 +195,7 @@ def setup_page():
         st.subheader("Irrigation Schedule")
         st.caption("Amounts in mm per event; add or remove rows as needed.")
         irr_df = st.data_editor(
-            st.session_state['irr_schedule'],
-            num_rows="dynamic",
-            key='irr_schedule_editor'
+            st.session_state['irr_schedule'], num_rows="dynamic", key='irr_schedule_editor'
         )
         st.session_state['irr_schedule'] = irr_df
 
