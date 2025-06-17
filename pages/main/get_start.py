@@ -70,7 +70,7 @@ def setup_page():
     init_session_state()
     col1, _ = st.columns([3,4])
     with col1:
-        geolocator = Nominatim(user_agent="stics_app")
+        geolocator = Nominatim(user_agent="israeltankam@gmail.com")
         st.subheader("Setup")
 
         # Location
